@@ -283,6 +283,7 @@ export const Dashboard: React.FC = () => {
         setTransactions(prev => [...data.transactions, ...prev]);
         setExpandedGroup(new Date(data.transactions[0].createdAt || Date.now()).toLocaleDateString());
       }
+      fetchFreshUserStatus();
     } catch (err: any) {
       if (err.message && (err.message.toLowerCase().includes('reconnect') || err.message.toLowerCase().includes('expired') || err.message.toLowerCase().includes('not connected'))) {
         const updatedUser = { ...user, hasConnectedGmail: false };
@@ -999,13 +1000,39 @@ export const Dashboard: React.FC = () => {
                     );
                   })()}
                 </div>
+
+                {/* Weekly Quota Card */}
+                {user.quota && !user.quota.isAdmin && (
+                  <div className="mb-1 p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs">
+                    <div className="flex justify-between items-center mb-1.5 font-semibold text-slate-700">
+                      <span>Weekly Extraction Quota</span>
+                      <span className={user.quota.remaining === 0 ? 'text-rose-600 font-bold' : 'text-indigo-600 font-bold'}>
+                        {user.quota.remaining} of 5 remaining
+                      </span>
+                    </div>
+                    <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden mb-1">
+                      <div 
+                        className={`h-full transition-all duration-300 ${user.quota.remaining === 0 ? 'bg-rose-500' : 'bg-indigo-600'}`}
+                        style={{ width: `${Math.min(100, (user.quota.used / 5) * 100)}%` }}
+                      />
+                    </div>
+                    <p className="text-[10px] text-slate-500">Resets every Monday at 00:00 UTC</p>
+                  </div>
+                )}
+
                 <Button
                   variant="primary"
                   fullWidth
-                  disabled={isExtracting}
+                  disabled={isExtracting || (user.quota && !user.quota.isAdmin && user.quota.remaining === 0)}
                   onClick={handleRunExtraction}
                 >
-                  {isExtracting ? 'Extracting...' : 'Run New Extraction'}
+                  {isExtracting ? (
+                    'Extracting...'
+                  ) : user.quota && !user.quota.isAdmin && user.quota.remaining === 0 ? (
+                    'Weekly Limit Reached (0/5)'
+                  ) : (
+                    'Run New Extraction'
+                  )}
                 </Button>
               </div>
             </CardContent>
