@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { GoogleLogin } from '@react-oauth/google';
-import { LayoutDashboard, Mail, Lock, User, ArrowRight } from 'lucide-react';
+import { LayoutDashboard, Mail, Lock, User, ArrowRight, Eye, EyeOff } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '../../components/ui/Card';
@@ -17,6 +17,7 @@ export const Login: React.FC = () => {
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -177,7 +178,7 @@ export const Login: React.FC = () => {
                 <Input
                   label="Username"
                   type="text"
-                  placeholder="johndoe"
+                  placeholder="Username"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   className="pl-9 text-xs rounded-xl"
@@ -192,7 +193,7 @@ export const Login: React.FC = () => {
               <Input
                 label="Email"
                 type="email"
-                placeholder="you@example.com"
+                placeholder="Email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="pl-9 text-xs rounded-xl"
@@ -204,14 +205,26 @@ export const Login: React.FC = () => {
               <Lock className="w-4 h-4 absolute left-3 top-[34px] text-slate-400" />
               <Input
                 label="Password"
-                type="password"
-                placeholder="••••••••"
+                type={showPassword ? "text" : "password"}
+                placeholder="Password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="pl-9 text-xs rounded-xl"
+                className="pl-9 pr-10 text-xs rounded-xl"
                 required
                 minLength={6}
               />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3 top-[34px] text-slate-400 hover:text-slate-600 focus:outline-none cursor-pointer"
+                aria-label={showPassword ? "Hide password" : "Show password"}
+              >
+                {showPassword ? (
+                  <EyeOff className="w-4 h-4" />
+                ) : (
+                  <Eye className="w-4 h-4" />
+                )}
+              </button>
             </div>
 
             <Button 
