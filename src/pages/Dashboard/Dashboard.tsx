@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { 
   LogOut, 
@@ -9,12 +9,16 @@ import {
   Clock, 
   Settings, 
   Download, 
-  Trash2, 
   CheckCircle2, 
   Send, 
-  Lock 
+  Search, 
+  Sparkles, 
+  Wallet, 
+  ArrowUpRight, 
+  ArrowDownRight, 
+  RefreshCw, 
+  ChevronDown 
 } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { fetchApi } from '../../utils/api';
 import { config } from '../../config/env';
@@ -29,42 +33,30 @@ const formatField = (val: string | null | undefined) => {
   return val;
 };
 
-const formatRequestTime = (dateStr?: string) => {
-  if (!dateStr) return 'recently';
-  const d = new Date(dateStr);
-  const now = new Date();
-  const diffHours = Math.floor((now.getTime() - d.getTime()) / (1000 * 60 * 60));
-  if (diffHours < 1) return 'just now';
-  if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
-  const diffDays = Math.floor(diffHours / 24);
-  return `${diffDays} day${diffDays > 1 ? 's' : ''} ago (${d.toLocaleDateString('en-GB')})`;
+const formatCurrency = (amountStr: string | number | null | undefined, currency = 'NGN') => {
+  if (!amountStr) return '₦0.00';
+  const num = typeof amountStr === 'number' ? amountStr : parseFloat(amountStr.toString().replace(/[^0-9.-]+/g, ''));
+  if (isNaN(num)) return `${currency} ${amountStr}`;
+  return new Intl.NumberFormat('en-NG', {
+    style: 'currency',
+    currency: currency === 'NGN' ? 'NGN' : 'USD',
+    minimumFractionDigits: 2
+  }).format(num);
 };
 
 const DEFAULT_BANKS: { key: string; name: string }[] = [
-  { key: 'fidelity', name: 'Fidelity Bank' },
+  { key: 'gtbank', name: 'GTBank' },
   { key: 'opay', name: 'OPay' },
   { key: 'moniepoint', name: 'Moniepoint' },
-  { key: 'gtbank', name: 'GTBank' },
   { key: 'access', name: 'Access Bank' },
   { key: 'zenith', name: 'Zenith Bank' },
   { key: 'uba', name: 'UBA' },
-  { key: 'firstbank', name: 'First Bank' },
   { key: 'kuda', name: 'Kuda' },
   { key: 'palmpay', name: 'PalmPay' },
-  { key: 'fcmb', name: 'FCMB' },
-  { key: 'sterling', name: 'Sterling Bank' },
-  { key: 'wema', name: 'Wema Bank / ALAT' },
+  { key: 'firstbank', name: 'First Bank' },
+  { key: 'fidelity', name: 'Fidelity' },
   { key: 'stanbic', name: 'Stanbic IBTC' },
-  { key: 'providus', name: 'Providus Bank' },
-  { key: 'lotus', name: 'Lotus Bank' },
-  { key: 'polaris', name: 'Polaris Bank' },
-  { key: 'keystone', name: 'Keystone Bank' },
-  { key: 'union', name: 'Union Bank' },
-  { key: 'taj', name: 'TAJ Bank' },
-  { key: 'jaiz', name: 'Jaiz Bank' },
-  { key: 'ecobank', name: 'Ecobank' },
-  { key: 'unity', name: 'Unity Bank' },
-  { key: 'heritage', name: 'Heritage Bank' },
+  { key: 'wema', name: 'Wema / ALAT' },
 ];
 
 export const Dashboard: React.FC = () => {
@@ -73,31 +65,35 @@ export const Dashboard: React.FC = () => {
   const [requesting, setRequesting] = useState(false);
   const [showApprovalModal, setShowApprovalModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  
+  // Extraction options
   const [timeline, setTimeline] = useState('this_month');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [selectedBanks, setSelectedBanks] = useState<string[]>([]);
+  const [availableBanks, setAvailableBanks] = useState<{ key: string; name: string }[]>(DEFAULT_BANKS);
+  
+  // Transactions & UI State
   const [transactions, setTransactions] = useState<any[]>([]);
-  const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [typeFilter, setTypeFilter] = useState<'ALL' | 'Credit' | 'Debit'>('ALL');
   const [isExtracting, setIsExtracting] = useState(false);
   const [isExportingSheet, setIsExportingSheet] = useState(false);
   const [isSendingEmail, setIsSendingEmail] = useState(false);
-  const [groupToDelete, setGroupToDelete] = useState<{key: string, txs: any[]} | null>(null);
-  const [availableBanks, setAvailableBanks] = useState<{ key: string; name: string }[]>(DEFAULT_BANKS);
-  const [selectedBanks, setSelectedBanks] = useState<string[]>([]);
-  const [bankDropdownOpen, setBankDropdownOpen] = useState(false);
-  const [bankSearch, setBankSearch] = useState('');
-  const bankDropdownRef = useRef<HTMLDivElement>(null);
+  const [groupToDelete, setGroupToDelete] = useState<{ key: string; txs: any[] } | null>(null);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
 
-  // Close bank dropdown on outside click
+  // Close export menu when clicking outside
   useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (bankDropdownRef.current && !bankDropdownRef.current.contains(e.target as Node)) {
-        setBankDropdownOpen(false);
+    const handleClickOutside = (e: MouseEvent) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) {
+        setShowExportMenu(false);
       }
     };
-    if (bankDropdownOpen) document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [bankDropdownOpen]);
+    if (showExportMenu) document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showExportMenu]);
 
   const handleConnectGoogleClick = () => {
     if (!user?.isApproved) {
@@ -131,7 +127,6 @@ export const Dashboard: React.FC = () => {
     
     try {
       const parsedUser = JSON.parse(userData);
-      
       const searchParams = new URLSearchParams(window.location.search);
       if (searchParams.get('gmailConnected') === 'true') {
         parsedUser.hasConnectedGmail = true;
@@ -141,9 +136,8 @@ export const Dashboard: React.FC = () => {
       }
 
       setUser(parsedUser);
-      // Fetch latest approval status from server
       fetchFreshUserStatus();
-    } catch (e) {
+    } catch {
       navigate('/login');
     }
   }, [navigate]);
@@ -158,16 +152,10 @@ export const Dashboard: React.FC = () => {
   const fetchAvailableBanks = async () => {
     try {
       const data = await fetchApi('/extract/banks');
-      if (data.banks) setAvailableBanks(data.banks);
-    } catch (err) {
-      console.error('Failed to load banks:', err);
+      if (data.banks && Array.isArray(data.banks)) setAvailableBanks(data.banks);
+    } catch {
+      // Keep default banks
     }
-  };
-
-  const toggleBank = (key: string) => {
-    setSelectedBanks(prev =>
-      prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]
-    );
   };
 
   const loadHistory = async () => {
@@ -176,31 +164,15 @@ export const Dashboard: React.FC = () => {
       if (data.transactions) {
         setTransactions(data.transactions);
       }
-    } catch (err: any) {
-      console.error("Failed to load history:", err);
+    } catch (err) {
+      console.error('Failed to load history:', err);
     }
   };
 
-  const confirmDeleteGroup = async () => {
-    if (!groupToDelete) return;
-    
-    try {
-      const transactionIds = groupToDelete.txs.map(tx => tx.id);
-      await fetchApi('/extract/history', {
-        method: 'DELETE',
-        body: JSON.stringify({ transactionIds })
-      });
-      
-      toast.success('Transactions deleted successfully');
-      setTransactions(prev => prev.filter(tx => !transactionIds.includes(tx.id)));
-      if (expandedGroup === groupToDelete.key) {
-        setExpandedGroup(null);
-      }
-    } catch (err: any) {
-      toast.error(err.message || 'Failed to delete transactions');
-    } finally {
-      setGroupToDelete(null);
-    }
+  const toggleBank = (key: string) => {
+    setSelectedBanks(prev => 
+      prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]
+    );
   };
 
   const handleLogout = () => {
@@ -225,7 +197,7 @@ export const Dashboard: React.FC = () => {
       localStorage.setItem('user', JSON.stringify(updatedUser));
       toast.success(
         data.message || (isReRequest ? 'Admin re-notified of your request!' : 'Access request submitted to admin!'),
-        { duration: 6000 }
+        { duration: 5000 }
       );
     } catch (err: any) {
       toast.error(err.message || 'Failed to request access. Please try again.');
@@ -260,11 +232,12 @@ export const Dashboard: React.FC = () => {
     }
 
     if (timeline === 'custom' && (!startDate || !endDate)) {
-      toast.error('Please select both start and end dates for custom range');
+      toast.error('Please select both start and end dates');
       return;
     }
     
     setIsExtracting(true);
+    const toastId = toast.loading('Scanning Gmail & extracting transactions with AI...');
     try {
       let url = `/extract/run?timeline=${timeline}`;
       if (timeline === 'custom') {
@@ -274,14 +247,12 @@ export const Dashboard: React.FC = () => {
         url += `&banks=${selectedBanks.join(',')}`;
       }
       const data = await fetchApi(url, { method: 'POST' });
-      const bankLabel = selectedBanks.length > 0 ? selectedBanks.join(', ').toUpperCase() : 'all banks';
       toast.success(
-        `Done! Extracted ${data.newTransactionsAdded ?? 0} transactions from ${bankLabel}. All 3 formats (Google Sheet link, CSV, and PDF) have been emailed to ${user?.email || 'your email'}!`,
-        { duration: 8000 }
+        `Extracted ${data.newTransactionsAdded ?? 0} transactions! Report generated and synced.`,
+        { id: toastId, duration: 6000 }
       );
       if (data.transactions && data.transactions.length > 0) {
         setTransactions(prev => [...data.transactions, ...prev]);
-        setExpandedGroup(new Date(data.transactions[0].createdAt || Date.now()).toLocaleDateString());
       }
     } catch (err: any) {
       if (err.message && (err.message.toLowerCase().includes('reconnect') || err.message.toLowerCase().includes('expired') || err.message.toLowerCase().includes('not connected'))) {
@@ -289,50 +260,76 @@ export const Dashboard: React.FC = () => {
         setUser(updatedUser);
         localStorage.setItem('user', JSON.stringify(updatedUser));
       }
-      toast.error(err.message || 'Failed to run extraction.');
+      toast.error(err.message || 'Failed to run extraction.', { id: toastId });
     } finally {
       setIsExtracting(false);
     }
   };
 
-  const exportPDF = (txsToExport: any[] = transactions) => {
-    if (txsToExport.length === 0) {
-      toast.error("No transactions to export");
-      return;
+  const confirmDeleteGroup = async () => {
+    if (!groupToDelete) return;
+    try {
+      const transactionIds = groupToDelete.txs.map(tx => tx.id);
+      await fetchApi('/extract/history', {
+        method: 'DELETE',
+        body: JSON.stringify({ transactionIds })
+      });
+      toast.success('Transactions removed');
+      setTransactions(prev => prev.filter(tx => !transactionIds.includes(tx.id)));
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to delete transactions');
+    } finally {
+      setGroupToDelete(null);
     }
-    const doc = new jsPDF();
-    doc.text("MailExtract Transaction Report", 14, 15);
-    
-    const tableColumn = ["Date", "Sender", "Sender Bank", "Receiver", "Receiver Bank", "Account", "Type", "Amount"];
-    const tableRows: any[] = [];
-
-    txsToExport.forEach(tx => {
-      const txData = [
-        new Date(tx.date).toLocaleDateString(),
-        formatField(tx.sender),
-        formatField(tx.senderBank),
-        formatField(tx.receiver),
-        formatField(tx.receiverBank),
-        formatField(tx.accountNumber),
-        tx.transactionType,
-        tx.amount ? `${tx.currency || 'NGN'} ${tx.amount}` : "-"
-      ];
-      tableRows.push(txData);
-    });
-
-    autoTable(doc, {
-      head: [tableColumn],
-      body: tableRows,
-      startY: 20,
-    });
-    doc.save("MailExtract_Report.pdf");
   };
 
-  const exportExcel = (txsToExport: any[] = transactions, filename = 'MailExtract_Transactions') => {
-    if (txsToExport.length === 0) {
-      toast.error("No transactions to export");
-      return;
-    }
+  // Filtered Transactions & Summary Metrics
+  const filteredTransactions = useMemo(() => {
+    return transactions.filter(tx => {
+      const matchesType = typeFilter === 'ALL' || tx.transactionType?.toLowerCase() === typeFilter.toLowerCase();
+      const query = searchQuery.toLowerCase().trim();
+      if (!query) return matchesType;
+      
+      const searchTarget = `
+        ${tx.sender || ''} 
+        ${tx.receiver || ''} 
+        ${tx.senderBank || ''} 
+        ${tx.receiverBank || ''} 
+        ${tx.amount || ''} 
+        ${tx.accountNumber || ''} 
+        ${tx.transactionType || ''}
+      `.toLowerCase();
+
+      return matchesType && searchTarget.includes(query);
+    });
+  }, [transactions, typeFilter, searchQuery]);
+
+  const metrics = useMemo(() => {
+    let totalInflow = 0;
+    let totalOutflow = 0;
+
+    filteredTransactions.forEach(tx => {
+      const amount = parseFloat(tx.amount || '0');
+      if (!isNaN(amount)) {
+        if (tx.transactionType?.toLowerCase() === 'credit') {
+          totalInflow += amount;
+        } else if (tx.transactionType?.toLowerCase() === 'debit') {
+          totalOutflow += amount;
+        }
+      }
+    });
+
+    return {
+      totalInflow,
+      totalOutflow,
+      netFlow: totalInflow - totalOutflow,
+      count: filteredTransactions.length,
+    };
+  }, [filteredTransactions]);
+
+  // Export handlers
+  const exportExcel = (txsToExport = filteredTransactions) => {
+    if (txsToExport.length === 0) return toast.error("No transactions to export");
     const data = txsToExport.map(tx => ({
       Date: new Date(tx.date).toLocaleDateString('en-GB'),
       Type: tx.transactionType || 'Unknown',
@@ -344,30 +341,46 @@ export const Dashboard: React.FC = () => {
       'Receiver Bank': formatField(tx.receiverBank),
       'Account Number': formatField(tx.accountNumber),
     }));
-
     const worksheet = XLSX.utils.json_to_sheet(data);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Transactions');
-    XLSX.writeFile(workbook, `${filename}_${new Date().toISOString().slice(0, 10)}.xlsx`);
-    toast.success("Excel (.xlsx) spreadsheet downloaded!");
+    XLSX.writeFile(workbook, `MailExtract_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    toast.success("Excel (.xlsx) downloaded!");
+    setShowExportMenu(false);
   };
 
-  const exportCSV = (txsToExport: any[] = transactions) => {
-    if (txsToExport.length === 0) {
-      toast.error("No transactions to export");
-      return;
-    }
+  const exportPDF = (txsToExport = filteredTransactions) => {
+    if (txsToExport.length === 0) return toast.error("No transactions to export");
+    const doc = new jsPDF();
+    doc.text("MailExtract Financial Report", 14, 15);
+    const tableColumn = ["Date", "Type", "Amount", "Sender", "Sender Bank", "Receiver", "Receiver Bank"];
+    const tableRows = txsToExport.map(tx => [
+      new Date(tx.date).toLocaleDateString(),
+      tx.transactionType || '-',
+      tx.amount ? `${tx.currency || 'NGN'} ${tx.amount}` : "-",
+      formatField(tx.sender),
+      formatField(tx.senderBank),
+      formatField(tx.receiver),
+      formatField(tx.receiverBank),
+    ]);
+    autoTable(doc, { head: [tableColumn], body: tableRows, startY: 22 });
+    doc.save("MailExtract_Report.pdf");
+    toast.success("PDF report downloaded!");
+    setShowExportMenu(false);
+  };
+
+  const exportCSV = (txsToExport = filteredTransactions) => {
+    if (txsToExport.length === 0) return toast.error("No transactions to export");
     const csv = Papa.unparse(txsToExport.map(tx => ({
       Date: new Date(tx.date).toLocaleDateString(),
+      Type: tx.transactionType,
+      Amount: tx.amount ? `${tx.currency || 'NGN'} ${tx.amount}` : "-",
       Sender: formatField(tx.sender),
       "Sender Bank": formatField(tx.senderBank),
       Receiver: formatField(tx.receiver),
       "Receiver Bank": formatField(tx.receiverBank),
       Account: formatField(tx.accountNumber),
-      Type: tx.transactionType,
-      Amount: tx.amount ? `${tx.currency || 'NGN'} ${tx.amount}` : "-"
     })));
-    
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -376,59 +389,44 @@ export const Dashboard: React.FC = () => {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    toast.success("CSV file downloaded!");
+    setShowExportMenu(false);
   };
 
-  const exportGoogleSheet = async (txsToExport: any[] = transactions, title?: string) => {
-    if (txsToExport.length === 0) {
-      toast.error("No transactions to export");
-      return;
-    }
-
-    const newTab = window.open('', '_blank');
-    if (newTab) {
-      newTab.document.write('<html><head><title>Creating Google Sheet...</title></head><body style="font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8fafc;"><div style="text-align:center;"><h2 style="color:#1e40af;">Creating your Google Sheet...</h2><p style="color:#64748b;">Please wait while MailExtract generates your spreadsheet.</p></div></body></html>');
-    }
-
+  const exportGoogleSheet = async (txsToExport = filteredTransactions) => {
+    if (txsToExport.length === 0) return toast.error("No transactions to export");
     setIsExportingSheet(true);
-    const toastId = toast.loading("Generating Google Sheet in Google Drive...");
+    setShowExportMenu(false);
+    const toastId = toast.loading("Creating Google Sheet in Google Drive...");
     try {
       const transactionIds = txsToExport.map(tx => tx.id || tx.messageId).filter(Boolean);
       const data = await fetchApi('/reports/google-sheet', {
         method: 'POST',
-        body: JSON.stringify({ transactionIds, title }),
+        body: JSON.stringify({ transactionIds, title: `MailExtract Report - ${new Date().toLocaleDateString()}` }),
       });
-
       toast.success("Google Sheet created!", { id: toastId });
       if (data.spreadsheetUrl) {
-        if (newTab) {
-          newTab.location.href = data.spreadsheetUrl;
-        } else {
-          window.open(data.spreadsheetUrl, '_blank');
-        }
+        window.open(data.spreadsheetUrl, '_blank');
       }
     } catch (err: any) {
-      if (newTab) newTab.close();
       toast.error(err.message || "Failed to create Google Sheet", { id: toastId });
     } finally {
       setIsExportingSheet(false);
     }
   };
 
-  const emailReport = async (txsToExport: any[] = transactions, title?: string) => {
-    if (txsToExport.length === 0) {
-      toast.error("No transactions to email");
-      return;
-    }
+  const emailReport = async (txsToExport = filteredTransactions) => {
+    if (txsToExport.length === 0) return toast.error("No transactions to email");
     setIsSendingEmail(true);
+    setShowExportMenu(false);
     const toastId = toast.loading(`Sending report to ${user?.email || 'your email'}...`);
     try {
       const transactionIds = txsToExport.map(tx => tx.id || tx.messageId).filter(Boolean);
       const data = await fetchApi('/reports/email', {
         method: 'POST',
-        body: JSON.stringify({ transactionIds, title }),
+        body: JSON.stringify({ transactionIds, title: `MailExtract Summary - ${new Date().toLocaleDateString()}` }),
       });
-
-      toast.success(data.message || `Report emailed successfully!`, { id: toastId, duration: 5000 });
+      toast.success(data.message || 'Report emailed successfully!', { id: toastId });
     } catch (err: any) {
       toast.error(err.message || "Failed to send email report", { id: toastId });
     } finally {
@@ -438,155 +436,36 @@ export const Dashboard: React.FC = () => {
 
   if (!user) return null;
 
-  const groupedTransactions = transactions.reduce((groups: any, tx: any) => {
-    const exactTimeStr = tx.createdAt || tx.date;
-    const dateStr = new Date(exactTimeStr).toLocaleDateString();
-    const timeStr = new Date(exactTimeStr).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const key = exactTimeStr;
-    if (!groups[key]) {
-      groups[key] = { label: `Extraction on ${dateStr} at ${timeStr}`, txs: [] };
-    }
-    groups[key].txs.push(tx);
-    return groups;
-  }, {});
-
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-slate-50/50 text-slate-800 font-sans pb-16">
       
-      {/* Account Approval & Access Modal */}
-      {showApprovalModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 sm:p-8 scale-in-center">
-            <div className="flex justify-between items-center mb-5">
-              <div className="flex items-center gap-3">
-                <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
-                  user.isApproved 
-                    ? 'bg-emerald-100 text-emerald-600' 
-                    : user.accessRequested 
-                    ? 'bg-amber-100 text-amber-600' 
-                    : 'bg-blue-100 text-blue-600'
-                }`}>
-                  {user.isApproved ? (
-                    <CheckCircle2 className="w-6 h-6" />
-                  ) : user.accessRequested ? (
-                    <Clock className="w-6 h-6 animate-pulse" />
-                  ) : (
-                    <ShieldAlert className="w-6 h-6" />
-                  )}
-                </div>
-                <div>
-                  <h3 className="text-xl font-bold text-gray-900">Gmail Access & Approval</h3>
-                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold mt-0.5 ${
-                    user.isApproved 
-                      ? 'bg-emerald-100 text-emerald-800' 
-                      : user.accessRequested 
-                      ? 'bg-amber-100 text-amber-800' 
-                      : 'bg-blue-100 text-blue-800'
-                  }`}>
-                    {user.isApproved 
-                      ? '✓ Approved' 
-                      : user.accessRequested 
-                      ? '⏳ Pending Admin Review' 
-                      : 'Action Required'}
-                  </span>
-                </div>
-              </div>
-              <button 
-                onClick={() => setShowApprovalModal(false)} 
-                className="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-100 transition-colors"
-              >
-                ✕
-              </button>
+      {/* Settings Modal */}
+      {showSettings && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-in fade-in">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <Settings className="w-5 h-5 text-slate-600" /> Account Settings
+              </h3>
+              <button onClick={() => setShowSettings(false)} className="text-slate-400 hover:text-slate-600 p-1">✕</button>
             </div>
-
-            <div className="space-y-4 text-gray-600 text-sm">
-              {user.isApproved ? (
-                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-emerald-900">
-                  <p className="font-semibold mb-1">Your account is fully approved!</p>
-                  <p className="text-xs text-emerald-700">
-                    You can now connect your Gmail account and run financial extraction sessions.
-                  </p>
-                </div>
-              ) : user.accessRequested ? (
-                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-amber-900 space-y-2">
-                  <p className="font-semibold flex items-center gap-1.5">
-                    <Clock className="w-4 h-4 text-amber-600" /> Your request is in queue
-                  </p>
-                  <p className="text-xs text-amber-800">
-                    An administrator has been notified to review your account and add your email (<strong>{user.email}</strong>) to the Google Cloud testing list.
-                  </p>
-                  <p className="text-xs text-amber-700">
-                    <em>Requested: {formatRequestTime(user.updatedAt || user.createdAt)}</em>
-                  </p>
-                  <p className="text-xs text-amber-800 pt-1 border-t border-amber-200/60">
-                    💡 If your request is pending after a day, click the button below to send a fresh reminder to the administrator.
-                  </p>
-                </div>
-              ) : (
-                <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-blue-900 space-y-1">
-                  <p className="font-semibold">One-Time Approval Needed</p>
-                  <p className="text-xs text-blue-800">
-                    To maintain bank-grade security, our admin team must authorize your account before MailExtract can connect to Gmail.
-                  </p>
-                </div>
-              )}
-
-              <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 space-y-2">
-                <h4 className="font-semibold text-gray-900 text-xs uppercase tracking-wider">Privacy & Security Guarantee:</h4>
-                <ul className="space-y-1.5 text-xs text-gray-600">
-                  <li className="flex items-center gap-1.5">
-                    <span className="text-emerald-500 font-bold">✓</span> <strong>Read-Only:</strong> We only scan financial bank alerts (OPay, GTB, Zenith, etc.).
-                  </li>
-                  <li className="flex items-center gap-1.5">
-                    <span className="text-emerald-500 font-bold">✓</span> <strong>No Personal Emails:</strong> We never read personal conversations.
-                  </li>
-                  <li className="flex items-center gap-1.5">
-                    <span className="text-emerald-500 font-bold">✓</span> <strong>No Sending or Deleting:</strong> We never modify or send emails on your behalf.
-                  </li>
-                </ul>
-              </div>
-
-              <div className="flex gap-3 pt-2">
-                <Button 
-                  variant="outline" 
-                  fullWidth 
-                  onClick={() => setShowApprovalModal(false)}
-                >
-                  Close
-                </Button>
-
-                {user.isApproved ? (
-                  <Button 
-                    fullWidth 
-                    onClick={() => {
-                      setShowApprovalModal(false);
-                      handleConnectGoogleClick();
-                    }}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
-                  >
-                    Proceed to Connect Gmail
-                  </Button>
-                ) : user.accessRequested ? (
-                  <Button 
-                    fullWidth 
-                    onClick={() => handleRequestOrRemindAccess(true)} 
-                    disabled={requesting}
-                    className="bg-amber-600 hover:bg-amber-700 text-white shadow-sm flex items-center justify-center gap-2"
-                  >
-                    <Send className="w-4 h-4" />
-                    {requesting ? 'Sending...' : 'Remind Admin (Re-request)'}
-                  </Button>
-                ) : (
-                  <Button 
-                    fullWidth 
-                    onClick={() => handleRequestOrRemindAccess(false)} 
-                    disabled={requesting}
-                    className="bg-blue-600 hover:bg-blue-700 text-white shadow-sm"
-                  >
-                    {requesting ? 'Submitting...' : 'Request Access'}
-                  </Button>
-                )}
-              </div>
+            <div className="bg-rose-50 border border-rose-100 rounded-xl p-4 mb-4">
+              <h4 className="font-semibold text-rose-900 text-sm mb-1">Disconnect Gmail Integration</h4>
+              <p className="text-xs text-rose-700 mb-3">
+                Revoking access will disconnect your Gmail account and disable future automated bank extractions.
+              </p>
+              <Button 
+                variant="outline" 
+                size="sm"
+                fullWidth
+                onClick={handleRevokeAccess}
+                className="bg-white text-rose-600 border-rose-200 hover:bg-rose-100"
+              >
+                Disconnect Gmail
+              </Button>
+            </div>
+            <div className="flex justify-end">
+              <Button variant="secondary" size="sm" onClick={() => setShowSettings(false)}>Close</Button>
             </div>
           </div>
         </div>
@@ -594,553 +473,530 @@ export const Dashboard: React.FC = () => {
 
       {/* Delete Group Modal */}
       {groupToDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 scale-in-center">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-                <Trash2 className="w-5 h-5 text-red-600" /> Delete Extraction
-              </h3>
-              <button onClick={() => setGroupToDelete(null)} className="text-gray-400 hover:text-gray-600">
-                ✕
-              </button>
-            </div>
-            
-            <div className="space-y-4">
-              <div className="border border-red-100 bg-red-50 rounded-lg p-4">
-                <h4 className="font-semibold text-red-900 mb-1">Confirm Deletion</h4>
-                <p className="text-sm text-red-700 mb-4">
-                  Are you sure you want to delete {groupToDelete.txs.length} transactions from this extraction? This action cannot be undone.
-                </p>
-                <div className="flex justify-end gap-3">
-                  <Button 
-                    variant="outline" 
-                    className="bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
-                    onClick={() => setGroupToDelete(null)}
-                  >
-                    Cancel
-                  </Button>
-                  <Button 
-                    className="bg-red-600 hover:bg-red-700 text-white shadow-sm border-0"
-                    onClick={() => confirmDeleteGroup()}
-                  >
-                    Yes, Delete
-                  </Button>
-                </div>
-              </div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
+            <h3 className="text-lg font-bold text-slate-900 mb-2">Delete Extraction</h3>
+            <p className="text-sm text-slate-600 mb-5">
+              Are you sure you want to delete these {groupToDelete.txs.length} transactions? This action cannot be undone.
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setGroupToDelete(null)}>Cancel</Button>
+              <Button variant="danger" size="sm" onClick={confirmDeleteGroup}>Yes, Delete</Button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Settings Modal */}
-      {showSettings && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 scale-in-center">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-                <Settings className="w-5 h-5 text-gray-600" /> Settings
-              </h3>
-              <button onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-gray-600">
-                ✕
-              </button>
-            </div>
-            
-            <div className="space-y-4">
-              <div className="border border-red-100 bg-red-50 rounded-lg p-4">
-                <h4 className="font-semibold text-red-900 mb-1">Danger Zone</h4>
-                <p className="text-sm text-red-700 mb-4">
-                  Revoking access will prevent MailExtract from scanning your emails and extracting future transactions.
-                </p>
-                <Button 
-                  variant="outline" 
-                  fullWidth 
-                  className="text-red-600 border-red-200 hover:bg-red-100 hover:border-red-300 bg-white"
-                  onClick={() => {
-                    setShowSettings(false);
-                    toast((t) => (
-                      <div className="flex flex-col gap-3 max-w-sm">
-                        <p className="font-semibold text-gray-900 text-sm">Remove Gmail Access</p>
-                        <p className="text-sm text-gray-700">
-                          Are you sure you want to completely revoke access?
-                        </p>
-                        <div className="flex justify-end gap-2 mt-2">
-                          <Button variant="outline" size="sm" onClick={() => toast.dismiss(t.id)}>
-                            Cancel
-                          </Button>
-                          <Button 
-                            size="sm" 
-                            className="bg-red-600 hover:bg-red-700 text-white"
-                            onClick={() => {
-                              toast.dismiss(t.id);
-                              handleRevokeAccess();
-                            }}
-                          >
-                            Yes, Remove Access
-                          </Button>
-                        </div>
-                      </div>
-                    ), { duration: Infinity });
-                  }}
-                >
-                  Remove Gmail Access
-                </Button>
+      {/* Approval Modal */}
+      {showApprovalModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
+            <div className="flex justify-between items-center mb-4">
+              <div className="flex items-center gap-2">
+                <ShieldAlert className="w-5 h-5 text-blue-600" />
+                <h3 className="text-lg font-bold text-slate-900">Access Approval Required</h3>
               </div>
+              <button onClick={() => setShowApprovalModal(false)} className="text-slate-400 hover:text-slate-600">✕</button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Top Navigation */}
-      <header className="bg-white border-b border-gray-200 shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between h-16 items-center">
-            <div className="flex items-center">
-              <LayoutDashboard className="h-6 w-6 text-blue-600 mr-2" />
-              <span className="font-bold text-xl text-gray-900 tracking-tight">MailExtract</span>
+            <p className="text-sm text-slate-600 mb-4">
+              To connect your Gmail account, an administrator must authorize your email (<strong>{user.email}</strong>) in the Google Cloud Console.
+            </p>
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 mb-5 text-xs text-slate-600 space-y-1">
+              <p className="font-semibold text-slate-800">Bank-grade Security Guarantee:</p>
+              <p>✓ Read-only scanning restricted strictly to financial bank alerts.</p>
+              <p>✓ Zero storage of personal conversation content.</p>
             </div>
-            <div className="flex items-center space-x-4 sm:space-x-6">
-              {user.role === 'admin' && (
-                <Link to="/admin" className="text-sm font-medium text-purple-600 hover:text-purple-800 flex items-center bg-purple-50 px-2.5 py-1 rounded-md">
-                  <Settings className="w-4 h-4 mr-1" /> Admin Dashboard
-                </Link>
-              )}
-              <span className="text-sm text-gray-600 hidden sm:inline">
-                Welcome, <span className="font-semibold text-gray-900">{user.username}</span>
-              </span>
-              <Button variant="outline" size="sm" onClick={handleLogout} className="flex items-center">
-                <LogOut className="h-4 w-4 mr-2" />
-                Log out
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" size="sm" onClick={() => setShowApprovalModal(false)}>Cancel</Button>
+              <Button 
+                size="sm"
+                onClick={() => {
+                  handleRequestOrRemindAccess(user.accessRequested);
+                  setShowApprovalModal(false);
+                }}
+                disabled={requesting}
+                className="bg-blue-600 text-white hover:bg-blue-700"
+              >
+                {user.accessRequested ? 'Send Reminder' : 'Request Access'}
               </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Top Navbar */}
+      <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200 shadow-xs">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center text-white shadow-md shadow-blue-500/20">
+              <LayoutDashboard className="w-5 h-5" />
+            </div>
+            <div>
+              <span className="font-extrabold text-lg tracking-tight bg-gradient-to-r from-slate-900 to-slate-700 bg-clip-text text-transparent">
+                MailExtract
+              </span>
+              <span className="hidden sm:inline-block ml-2 px-2 py-0.5 text-[10px] font-semibold bg-blue-50 text-blue-700 rounded-full border border-blue-100">
+                PRO
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            {user.role === 'admin' && (
+              <Link 
+                to="/admin" 
+                className="text-xs font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg border border-indigo-100 transition-colors flex items-center gap-1"
+              >
+                <Settings className="w-3.5 h-3.5" /> Admin Panel
+              </Link>
+            )}
+
+            <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
+              <span className="text-sm font-medium text-slate-700 hidden sm:inline">
+                {user.username}
+              </span>
+              <button 
+                onClick={() => setShowSettings(true)}
+                className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
+                title="Settings"
+              >
+                <Settings className="w-4 h-4" />
+              </button>
+              <button 
+                onClick={handleLogout}
+                className="p-2 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                title="Logout"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
             </div>
           </div>
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10">
+      {/* Main Container */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8 space-y-6">
 
-        {/* Real-time Account Status Banner */}
-        {user.isApproved ? (
-          <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 sm:p-5 mb-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
-            <div className="flex items-center gap-3">
-              <div className="bg-emerald-100 p-2.5 rounded-xl text-emerald-700">
-                <CheckCircle2 className="w-5 h-5" />
+        {/* STEP 1: Quick Action / Status Ribbon */}
+        {!user.hasConnectedGmail && (
+          <div className="bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 rounded-2xl p-5 sm:p-6 text-white shadow-lg shadow-blue-500/15 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-white/20 backdrop-blur-md text-white">
+                  Step 1
+                </span>
+                <h3 className="text-lg font-bold">Connect Your Gmail to Start Extracting</h3>
               </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h4 className="font-bold text-emerald-950 text-sm sm:text-base">Account Approved & Ready</h4>
-                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                    Active
-                  </span>
-                </div>
-                <p className="text-xs text-emerald-700 mt-0.5">
-                  Your account is verified. You can connect Gmail and run transaction extractions anytime.
-                </p>
-              </div>
+              <p className="text-xs sm:text-sm text-blue-100 max-w-xl">
+                Allow MailExtract to scan transaction notifications from Nigerian banks and generate instant financial spreadsheets.
+              </p>
             </div>
-          </div>
-        ) : user.accessRequested ? (
-          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 sm:p-5 mb-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm animate-in fade-in">
-            <div className="flex items-start sm:items-center gap-3">
-              <div className="bg-amber-100 p-2.5 rounded-xl text-amber-700 mt-0.5 sm:mt-0">
-                <Clock className="w-5 h-5 animate-pulse" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h4 className="font-bold text-amber-950 text-sm sm:text-base">Pending Admin Approval</h4>
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-200 text-amber-900">
-                    In Review
-                  </span>
-                </div>
-                <p className="text-xs text-amber-800 mt-0.5">
-                  Requested <strong>{formatRequestTime(user.updatedAt || user.createdAt)}</strong>. Admin must review your account before Gmail can be connected.
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+
+            {user.isApproved ? (
               <Button
-                size="sm"
-                variant="outline"
+                onClick={handleConnectGoogleClick}
+                className="bg-white text-blue-700 hover:bg-blue-50 font-semibold px-5 py-2.5 rounded-xl shadow-md whitespace-nowrap text-sm border-0"
+              >
+                <Mail className="w-4 h-4 mr-2" /> Connect Gmail Now
+              </Button>
+            ) : user.accessRequested ? (
+              <Button
                 onClick={() => handleRequestOrRemindAccess(true)}
                 disabled={requesting}
-                className="bg-white text-amber-900 border-amber-300 hover:bg-amber-100 text-xs flex items-center gap-1.5 shadow-sm whitespace-nowrap"
+                className="bg-amber-400 hover:bg-amber-300 text-slate-900 font-semibold px-5 py-2.5 rounded-xl shadow-md whitespace-nowrap text-sm border-0"
               >
-                <Send className="w-3.5 h-3.5" />
-                {requesting ? 'Notifying...' : 'Remind Admin (Re-request)'}
+                <Clock className="w-4 h-4 mr-2 animate-pulse" /> Pending Approval (Remind Admin)
               </Button>
+            ) : (
               <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setShowApprovalModal(true)}
-                className="bg-white text-amber-800 border-amber-200 hover:bg-amber-100 text-xs whitespace-nowrap"
+                onClick={() => handleRequestOrRemindAccess(false)}
+                disabled={requesting}
+                className="bg-white text-blue-700 hover:bg-blue-50 font-semibold px-5 py-2.5 rounded-xl shadow-md whitespace-nowrap text-sm border-0"
               >
-                Details
+                <Send className="w-4 h-4 mr-2" /> Request Approval
               </Button>
-            </div>
+            )}
           </div>
-        ) : (
-          <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 sm:p-5 mb-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm animate-in fade-in">
-            <div className="flex items-start sm:items-center gap-3">
-              <div className="bg-blue-100 p-2.5 rounded-xl text-blue-700 mt-0.5 sm:mt-0">
-                <ShieldAlert className="w-5 h-5" />
+        )}
+
+        {/* STEP 2: Unified Command & Extraction Bar */}
+        <div className="bg-white border border-slate-200/80 rounded-2xl p-5 sm:p-6 shadow-xs space-y-5">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold">
+                <Sparkles className="w-5 h-5" />
               </div>
               <div>
-                <div className="flex items-center gap-2">
-                  <h4 className="font-bold text-blue-950 text-sm sm:text-base">One-Time Approval Required</h4>
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-200 text-blue-900">
-                    Action Needed
-                  </span>
+                <h2 className="text-base sm:text-lg font-bold text-slate-900">Extraction Controls</h2>
+                <p className="text-xs text-slate-500">Choose scan timeframe and bank filters, then extract with AI</p>
+              </div>
+            </div>
+
+            {/* Connection Status Badge */}
+            <div className="flex items-center gap-2">
+              {user.hasConnectedGmail ? (
+                <div className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  <CheckCircle2 className="w-3.5 h-3.5" /> Gmail Linked
                 </div>
-                <p className="text-xs text-blue-800 mt-0.5">
-                  Request admin approval to enable Gmail scanning for bank transaction alerts.
+              ) : (
+                <div className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                  <Clock className="w-3.5 h-3.5" /> Gmail Disconnected
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Timeline Pills */}
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-slate-600 uppercase tracking-wider">Select Timeframe</label>
+            <div className="flex flex-wrap gap-2">
+              {[
+                { id: 'this_month', label: 'This Month' },
+                { id: 'this_week', label: 'This Week' },
+                { id: '3m', label: 'Last 3 Months' },
+                { id: '1y', label: 'Last Year' },
+                { id: 'custom', label: 'Custom Dates' },
+              ].map(item => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setTimeline(item.id)}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                    timeline === item.id 
+                      ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/20' 
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+
+            {timeline === 'custom' && (
+              <div className="flex flex-wrap items-center gap-3 pt-2">
+                <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl text-xs">
+                  <span className="text-slate-500">From:</span>
+                  <input 
+                    type="date" 
+                    value={startDate} 
+                    onChange={e => setStartDate(e.target.value)}
+                    className="bg-transparent focus:outline-none text-slate-800"
+                  />
+                </div>
+                <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl text-xs">
+                  <span className="text-slate-500">To:</span>
+                  <input 
+                    type="date" 
+                    value={endDate} 
+                    onChange={e => setEndDate(e.target.value)}
+                    className="bg-transparent focus:outline-none text-slate-800"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Quick Bank Chips */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-slate-600 uppercase tracking-wider">
+                Filter By Bank {selectedBanks.length > 0 && `(${selectedBanks.length} Selected)`}
+              </label>
+              {selectedBanks.length > 0 && (
+                <button 
+                  onClick={() => setSelectedBanks([])}
+                  className="text-xs text-blue-600 hover:underline font-medium"
+                >
+                  Clear bank filters (Select All)
+                </button>
+              )}
+            </div>
+            
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                onClick={() => setSelectedBanks([])}
+                className={`px-3 py-1 rounded-lg text-xs font-medium transition-all ${
+                  selectedBanks.length === 0 
+                    ? 'bg-slate-900 text-white' 
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                All Banks
+              </button>
+              {availableBanks.map(bank => {
+                const isSelected = selectedBanks.includes(bank.key);
+                return (
+                  <button
+                    key={bank.key}
+                    type="button"
+                    onClick={() => toggleBank(bank.key)}
+                    className={`px-3 py-1 rounded-lg text-xs font-medium transition-all ${
+                      isSelected 
+                        ? 'bg-blue-100 text-blue-800 border border-blue-300 font-semibold' 
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200 border border-transparent'
+                    }`}
+                  >
+                    {bank.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Run Extraction Button */}
+          <div className="pt-2">
+            <Button
+              onClick={handleRunExtraction}
+              disabled={isExtracting}
+              fullWidth
+              className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold h-12 rounded-xl shadow-md shadow-blue-500/20 text-sm flex items-center justify-center gap-2 border-0 cursor-pointer"
+            >
+              {isExtracting ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  Extracting Transactions with AI...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4" />
+                  Run Instant Extraction
+                </>
+              )}
+            </Button>
+          </div>
+        </div>
+
+        {/* STEP 3: Financial Analytics Cards */}
+        {transactions.length > 0 && (
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-white border border-slate-200/80 rounded-2xl p-4 sm:p-5 shadow-xs">
+              <div className="flex items-center justify-between text-emerald-600 mb-2">
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total Inflow</span>
+                <div className="w-8 h-8 rounded-xl bg-emerald-50 flex items-center justify-center">
+                  <ArrowDownRight className="w-4 h-4 text-emerald-600" />
+                </div>
+              </div>
+              <div className="text-lg sm:text-2xl font-black text-slate-900">
+                {formatCurrency(metrics.totalInflow)}
+              </div>
+              <span className="text-[11px] text-emerald-600 font-medium">Credits from bank alerts</span>
+            </div>
+
+            <div className="bg-white border border-slate-200/80 rounded-2xl p-4 sm:p-5 shadow-xs">
+              <div className="flex items-center justify-between text-rose-600 mb-2">
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total Outflow</span>
+                <div className="w-8 h-8 rounded-xl bg-rose-50 flex items-center justify-center">
+                  <ArrowUpRight className="w-4 h-4 text-rose-600" />
+                </div>
+              </div>
+              <div className="text-lg sm:text-2xl font-black text-slate-900">
+                {formatCurrency(metrics.totalOutflow)}
+              </div>
+              <span className="text-[11px] text-rose-600 font-medium">Debits & payments</span>
+            </div>
+
+            <div className="bg-white border border-slate-200/80 rounded-2xl p-4 sm:p-5 shadow-xs">
+              <div className="flex items-center justify-between text-blue-600 mb-2">
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Net Cash Flow</span>
+                <div className="w-8 h-8 rounded-xl bg-blue-50 flex items-center justify-center">
+                  <Wallet className="w-4 h-4 text-blue-600" />
+                </div>
+              </div>
+              <div className={`text-lg sm:text-2xl font-black ${metrics.netFlow >= 0 ? 'text-slate-900' : 'text-rose-600'}`}>
+                {formatCurrency(metrics.netFlow)}
+              </div>
+              <span className="text-[11px] text-slate-500 font-medium">Inflow vs Outflow</span>
+            </div>
+
+            <div className="bg-white border border-slate-200/80 rounded-2xl p-4 sm:p-5 shadow-xs">
+              <div className="flex items-center justify-between text-indigo-600 mb-2">
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Transactions</span>
+                <div className="w-8 h-8 rounded-xl bg-indigo-50 flex items-center justify-center">
+                  <FileSpreadsheet className="w-4 h-4 text-indigo-600" />
+                </div>
+              </div>
+              <div className="text-lg sm:text-2xl font-black text-slate-900">
+                {metrics.count}
+              </div>
+              <span className="text-[11px] text-slate-500 font-medium">Matching records</span>
+            </div>
+          </div>
+        )}
+
+        {/* STEP 4: Interactive Transactions Table & Unified Export Hub */}
+        <div className="bg-white border border-slate-200/80 rounded-2xl shadow-xs overflow-hidden">
+          
+          {/* Header Controls */}
+          <div className="p-5 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <h3 className="text-base font-bold text-slate-900">Transaction History</h3>
+              <p className="text-xs text-slate-500">
+                Showing {filteredTransactions.length} of {transactions.length} total extracted transactions
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2.5">
+              
+              {/* Search Bar */}
+              <div className="relative min-w-[220px] flex-1 sm:flex-initial">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input 
+                  type="text"
+                  placeholder="Search sender, bank, amount..."
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-1.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                />
+              </div>
+
+              {/* Type Filter Buttons */}
+              <div className="flex items-center bg-slate-100 p-1 rounded-xl">
+                {(['ALL', 'Credit', 'Debit'] as const).map(t => (
+                  <button
+                    key={t}
+                    onClick={() => setTypeFilter(t)}
+                    className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
+                      typeFilter === t 
+                        ? 'bg-white text-slate-900 shadow-xs' 
+                        : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    {t === 'ALL' ? 'All' : t === 'Credit' ? 'Inflows (+)' : 'Outflows (-)'}
+                  </button>
+                ))}
+              </div>
+
+              {/* Unified Export Menu Dropdown */}
+              <div className="relative" ref={exportMenuRef}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowExportMenu(!showExportMenu)}
+                  disabled={filteredTransactions.length === 0}
+                  className="h-9 px-3.5 bg-slate-900 text-white hover:bg-slate-800 border-0 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-sm"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Export & Share
+                  <ChevronDown className="w-3.5 h-3.5 ml-1" />
+                </Button>
+
+                {showExportMenu && (
+                  <div className="absolute right-0 mt-2 w-56 bg-white border border-slate-200 rounded-2xl shadow-xl z-30 p-1.5 space-y-1 animate-in fade-in">
+                    <button
+                      onClick={() => exportExcel()}
+                      className="w-full text-left px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 rounded-xl flex items-center gap-2 transition-colors"
+                    >
+                      <Download className="w-3.5 h-3.5 text-emerald-600" /> Download Excel (.xlsx)
+                    </button>
+                    <button
+                      onClick={() => exportPDF()}
+                      className="w-full text-left px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 rounded-xl flex items-center gap-2 transition-colors"
+                    >
+                      <Download className="w-3.5 h-3.5 text-rose-600" /> Download PDF Report
+                    </button>
+                    <button
+                      onClick={() => exportCSV()}
+                      className="w-full text-left px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 rounded-xl flex items-center gap-2 transition-colors"
+                    >
+                      <Download className="w-3.5 h-3.5 text-slate-600" /> Download CSV
+                    </button>
+                    <div className="border-t border-slate-100 my-1"></div>
+                    <button
+                      onClick={() => exportGoogleSheet()}
+                      disabled={isExportingSheet}
+                      className="w-full text-left px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 rounded-xl flex items-center gap-2 transition-colors"
+                    >
+                      <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" /> Create Google Sheet (Drive)
+                    </button>
+                    <button
+                      onClick={() => emailReport()}
+                      disabled={isSendingEmail}
+                      className="w-full text-left px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 rounded-xl flex items-center gap-2 transition-colors"
+                    >
+                      <Mail className="w-3.5 h-3.5 text-blue-600" /> Email Report to Me
+                    </button>
+                  </div>
+                )}
+              </div>
+
+            </div>
+          </div>
+
+          {/* Table Body */}
+          {filteredTransactions.length === 0 ? (
+            <div className="p-12 text-center space-y-3">
+              <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-400 mx-auto flex items-center justify-center">
+                <FileSpreadsheet className="w-6 h-6" />
+              </div>
+              <div className="space-y-1">
+                <h4 className="font-bold text-slate-800 text-sm">No transactions found</h4>
+                <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                  {transactions.length === 0 
+                    ? 'Click "Run Instant Extraction" above to scan your connected Gmail account.'
+                    : 'Try changing your search query or filter tags to see matching records.'}
                 </p>
               </div>
             </div>
-            <Button
-              size="sm"
-              onClick={() => handleRequestOrRemindAccess(false)}
-              disabled={requesting}
-              className="bg-blue-600 hover:bg-blue-700 text-white text-xs shadow-sm w-full sm:w-auto whitespace-nowrap"
-            >
-              {requesting ? 'Requesting...' : 'Request Access'}
-            </Button>
-          </div>
-        )}
-
-        {/* Dashboard 2-Card Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8 items-stretch">
-          
-          {/* Card 1: Google Integration */}
-          <Card className="hover:shadow-xl transition-shadow duration-300 relative flex flex-col h-full">
-            {user.hasConnectedGmail && (
-              <div className="absolute top-4 right-4">
-                <button 
-                  type="button"
-                  onClick={() => setShowSettings(true)}
-                  className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors"
-                  title="Settings"
-                >
-                  <Settings className="w-5 h-5" />
-                </button>
-              </div>
-            )}
-            <CardHeader>
-              <div className="bg-blue-50 w-14 h-14 rounded-2xl flex items-center justify-center mb-4">
-                <Mail className="h-7 w-7 text-blue-600" />
-              </div>
-              <CardTitle className="text-xl">1. Google Integration</CardTitle>
-            </CardHeader>
-            <CardContent className="flex-grow flex flex-col">
-              <p className="text-gray-600 mb-6 text-sm">
-                Connect your Gmail account to allow MailExtract to securely scan and extract transactional emails.
-              </p>
-              <div className="mt-auto">
-                {user.hasConnectedGmail ? (
-                  <div className="flex gap-2">
-                    <Button variant="outline" fullWidth disabled className="border-green-500 text-green-700 bg-green-50">
-                      <CheckCircle2 className="w-4 h-4 mr-1.5 text-green-600" /> Gmail Connected
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={handleConnectGoogleClick} className="text-xs text-blue-600 border-blue-200 hover:bg-blue-50 whitespace-nowrap">
-                      Reconnect
-                    </Button>
-                  </div>
-                ) : user.isApproved ? (
-                  <Button variant="primary" fullWidth onClick={handleConnectGoogleClick}>
-                    Connect Gmail
-                  </Button>
-                ) : (
-                  <Button 
-                    variant="primary" 
-                    fullWidth 
-                    onClick={handleConnectGoogleClick}
-                    className="bg-gray-800 hover:bg-gray-900 text-white flex items-center justify-center gap-2"
-                  >
-                    <Lock className="w-4 h-4 text-amber-400" />
-                    Connect Gmail {user.accessRequested ? '(Pending Approval)' : '(Approval Needed)'}
-                  </Button>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Card 2: Data Extraction */}
-          <Card className="hover:shadow-xl transition-shadow duration-300 relative flex flex-col h-full">
-            <CardHeader>
-              <div className="bg-green-50 w-14 h-14 rounded-2xl flex items-center justify-center mb-4">
-                <FileSpreadsheet className="h-7 w-7 text-green-600" />
-              </div>
-              <CardTitle className="text-xl">2. Data Extraction</CardTitle>
-            </CardHeader>
-            <CardContent className="flex-grow flex flex-col">
-              <p className="text-gray-600 mb-6 text-sm">
-                Run the extraction engine to parse data from your emails.
-              </p>
-              <div className="flex flex-col gap-3 mt-auto">
-                <div className="flex flex-col mb-2">
-                  <label className="text-sm font-medium text-gray-700 mb-1">Scan Timeline</label>
-                  <select 
-                    className="border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 mb-3 bg-white"
-                    value={timeline}
-                    onChange={(e) => setTimeline(e.target.value)}
-                    disabled={isExtracting}
-                  >
-                    <option value="this_month">This Month</option>
-                    <option value="this_week">This Week</option>
-                    <option value="3m">Last 3 Months</option>
-                    <option value="1y">Last Year</option>
-                    <option value="custom">Custom Range</option>
-                  </select>
-                  
-                  {timeline === 'custom' && (
-                    <div className="flex gap-2 mb-3">
-                      <div className="flex flex-col flex-1">
-                        <label className="text-xs font-medium text-gray-500 mb-1">Start Date</label>
-                        <input 
-                          type="date" 
-                          className="border border-gray-300 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white" 
-                          value={startDate} 
-                          onChange={e => setStartDate(e.target.value)} 
-                          disabled={isExtracting} 
-                        />
-                      </div>
-                      <div className="flex flex-col flex-1">
-                        <label className="text-xs font-medium text-gray-500 mb-1">End Date</label>
-                        <input 
-                          type="date" 
-                          className="border border-gray-300 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white" 
-                          value={endDate} 
-                          onChange={e => setEndDate(e.target.value)} 
-                          disabled={isExtracting} 
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Bank Filter Dropdown */}
-                  {availableBanks.length > 0 && (() => {
-                    const unselected = availableBanks.filter(
-                      b => !selectedBanks.includes(b.key) &&
-                        b.name.toLowerCase().includes(bankSearch.toLowerCase())
-                    );
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-slate-50/80 text-slate-500 font-bold uppercase tracking-wider border-b border-slate-200/80">
+                    <th className="py-3 px-4">Date</th>
+                    <th className="py-3 px-4">Type</th>
+                    <th className="py-3 px-4">Amount</th>
+                    <th className="py-3 px-4">Sender & Bank</th>
+                    <th className="py-3 px-4">Receiver & Bank</th>
+                    <th className="py-3 px-4">Account</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredTransactions.map((tx, idx) => {
+                    const isCredit = tx.transactionType?.toLowerCase() === 'credit';
+                    const isDebit = tx.transactionType?.toLowerCase() === 'debit';
+                    
                     return (
-                      <div ref={bankDropdownRef} className="mt-2">
-                        <div className="flex items-center justify-between mb-1">
-                          <label className="text-sm font-medium text-gray-700">Filter by Bank</label>
-                          {selectedBanks.length > 0 && (
-                            <button
-                              type="button"
-                              onClick={() => setSelectedBanks([])}
-                              className="text-xs text-gray-400 hover:text-red-500 transition-colors"
-                              disabled={isExtracting}
-                            >
-                              Clear all
-                            </button>
-                          )}
-                        </div>
-
-                        {/* Trigger / Search input */}
-                        <div className="relative">
-                          <input
-                            type="text"
-                            placeholder={selectedBanks.length === 0 ? 'Search banks… (blank = all)' : 'Add another bank…'}
-                            value={bankSearch}
-                            onChange={e => { setBankSearch(e.target.value); setBankDropdownOpen(true); }}
-                            onFocus={() => setBankDropdownOpen(true)}
-                            disabled={isExtracting}
-                            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                          />
-                          <svg className="w-4 h-4 text-gray-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z" /></svg>
-                        </div>
-
-                        {/* Dropdown list — only unselected banks matching search */}
-                        {bankDropdownOpen && unselected.length > 0 && (
-                          <div className="relative z-30 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto mt-1">
-                            {unselected.map(bank => (
-                              <button
-                                key={bank.key}
-                                type="button"
-                                onMouseDown={e => { e.preventDefault(); toggleBank(bank.key); setBankSearch(''); }}
-                                className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-700 transition-colors flex items-center gap-2"
-                              >
-                                <span className="w-4 h-4 rounded border border-gray-300 flex-shrink-0" />
-                                {bank.name}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-
-                        {/* Selected banks as removable tags */}
-                        {selectedBanks.length > 0 && (
-                          <div className="flex flex-wrap gap-1.5 mt-2">
-                            {selectedBanks.map(key => {
-                              const bank = availableBanks.find(b => b.key === key);
-                              if (!bank) return null;
-                              return (
-                                <span
-                                  key={key}
-                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 border border-blue-200"
-                                >
-                                  {bank.name}
-                                  <button
-                                    type="button"
-                                    onClick={() => toggleBank(key)}
-                                    disabled={isExtracting}
-                                    className="ml-0.5 text-blue-500 hover:text-blue-800 disabled:opacity-50 leading-none"
-                                    aria-label={`Remove ${bank.name}`}
-                                  >
-                                    ×
-                                  </button>
-                                </span>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
+                      <tr key={idx} className="hover:bg-slate-50/60 transition-colors">
+                        <td className="py-3 px-4 font-medium text-slate-700 whitespace-nowrap">
+                          {new Date(tx.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                        </td>
+                        <td className="py-3 px-4">
+                          <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+                            isCredit 
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' 
+                              : isDebit 
+                              ? 'bg-rose-50 text-rose-700 border border-rose-200' 
+                              : 'bg-slate-100 text-slate-700'
+                          }`}>
+                            {isCredit ? '+' : isDebit ? '-' : ''} {tx.transactionType || 'Unknown'}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 font-black text-slate-900 whitespace-nowrap">
+                          <span className={isCredit ? 'text-emerald-700' : isDebit ? 'text-rose-700' : 'text-slate-900'}>
+                            {formatCurrency(tx.amount, tx.currency)}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4">
+                          <div className="font-semibold text-slate-900">{formatField(tx.sender)}</div>
+                          <div className="text-[11px] text-slate-500">{formatField(tx.senderBank)}</div>
+                        </td>
+                        <td className="py-3 px-4">
+                          <div className="font-semibold text-slate-900">{formatField(tx.receiver)}</div>
+                          <div className="text-[11px] text-slate-500">{formatField(tx.receiverBank)}</div>
+                        </td>
+                        <td className="py-3 px-4 text-slate-500 font-mono">
+                          {formatField(tx.accountNumber)}
+                        </td>
+                      </tr>
                     );
-                  })()}
-                </div>
-                <Button 
-                  variant="primary" 
-                  fullWidth 
-                  disabled={isExtracting}
-                  onClick={handleRunExtraction}
-                >
-                  {isExtracting ? 'Extracting...' : 'Run New Extraction'}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
-        {/* Transactions Table Section */}
-        {Object.keys(groupedTransactions).length > 0 && (
-          <div className="mt-8 space-y-4">
-            <h3 className="text-xl font-bold text-gray-900 mb-4">Past Extractions</h3>
-            
-            {Object.keys(groupedTransactions).map((groupKey) => {
-              const groupData = groupedTransactions[groupKey];
-              const groupTxs = groupData.txs;
-              const groupLabel = groupData.label;
-              const isExpanded = expandedGroup === groupKey;
-              
-              return (
-                <Card key={groupKey} className="shadow-sm border-t-2 border-t-green-500 overflow-hidden">
-                  <div 
-                    className="flex flex-row items-center justify-between p-4 bg-white cursor-pointer hover:bg-gray-50 transition-colors"
-                    onClick={() => setExpandedGroup(isExpanded ? null : groupKey)}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="bg-green-100 p-2 rounded-lg">
-                        <FileSpreadsheet className="w-5 h-5 text-green-600" />
-                      </div>
-                      <div>
-                        <h4 className="font-semibold text-gray-900">{groupLabel}</h4>
-                        <p className="text-xs text-gray-500">{groupTxs.length} transaction{groupTxs.length !== 1 ? 's' : ''} found</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-4">
-                      {isExpanded && (
-                        <div className="flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
-                          <Button 
-                            variant="outline" 
-                            size="sm" 
-                            onClick={() => exportExcel(groupTxs, groupLabel.replace(/[^a-zA-Z0-9]/g, '_'))} 
-                            className="flex items-center gap-1 h-8 text-xs text-emerald-700 border-emerald-300 hover:bg-emerald-50"
-                          >
-                            <Download className="w-3 h-3 text-emerald-600" /> Excel (.xlsx)
-                          </Button>
-                          <Button variant="outline" size="sm" onClick={() => exportCSV(groupTxs)} className="flex items-center gap-1 h-8 text-xs">
-                            <Download className="w-3 h-3" /> CSV
-                          </Button>
-                          <Button variant="outline" size="sm" onClick={() => exportPDF(groupTxs)} className="flex items-center gap-1 h-8 text-xs">
-                            <Download className="w-3 h-3" /> PDF
-                          </Button>
-                          <Button 
-                            variant="outline" 
-                            size="sm" 
-                            onClick={() => exportGoogleSheet(groupTxs, groupLabel)} 
-                            disabled={isExportingSheet}
-                            className="flex items-center gap-1 h-8 text-xs text-green-700 border-green-300 hover:bg-green-50"
-                          >
-                            <FileSpreadsheet className="w-3 h-3 text-green-600" /> Google Sheet (Drive)
-                          </Button>
-                          <Button 
-                            variant="outline" 
-                            size="sm" 
-                            onClick={() => emailReport(groupTxs, groupLabel)} 
-                            disabled={isSendingEmail}
-                            className="flex items-center gap-1 h-8 text-xs text-blue-700 border-blue-300 hover:bg-blue-50"
-                          >
-                            <Mail className="w-3 h-3 text-blue-600" /> Email Report
-                          </Button>
-                          <Button variant="outline" size="sm" onClick={() => setGroupToDelete({ key: groupKey, txs: groupTxs })} className="flex items-center gap-1 h-8 text-xs text-red-600 border-red-200 hover:bg-red-50 hover:border-red-300">
-                            <Trash2 className="w-3 h-3" /> Delete
-                          </Button>
-                        </div>
-                      )}
-                      <span className="text-gray-400">
-                        {isExpanded ? '▲' : '▼'}
-                      </span>
-                    </div>
-                  </div>
-                  
-                  {isExpanded && (
-                    <div className="border-t border-gray-100 bg-gray-50/50 p-0">
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm text-left text-gray-500">
-                          <thead className="text-xs text-gray-700 uppercase bg-gray-100 border-b">
-                            <tr>
-                              <th className="px-4 py-3">Date</th>
-                              <th className="px-4 py-3">Sender</th>
-                              <th className="px-4 py-3">Sender Bank</th>
-                              <th className="px-4 py-3">Receiver</th>
-                              <th className="px-4 py-3">Receiver Bank</th>
-                              <th className="px-4 py-3">Account</th>
-                              <th className="px-4 py-3">Type</th>
-                              <th className="px-4 py-3">Amount</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {groupTxs.map((tx: any, idx: number) => (
-                              <tr key={idx} className="bg-white border-b hover:bg-gray-50">
-                                <td className="px-4 py-3 whitespace-nowrap">
-                                  {new Date(tx.date).toLocaleDateString()}
-                                </td>
-                                <td className="px-4 py-3 font-medium text-gray-900">
-                                  {formatField(tx.sender)}
-                                </td>
-                                <td className="px-4 py-3 text-gray-600">
-                                  {formatField(tx.senderBank)}
-                                </td>
-                                <td className="px-4 py-3 font-medium text-gray-900">
-                                  {formatField(tx.receiver)}
-                                </td>
-                                <td className="px-4 py-3 text-gray-600">
-                                  {formatField(tx.receiverBank)}
-                                </td>
-                                <td className="px-4 py-3">
-                                  {formatField(tx.accountNumber)}
-                                </td>
-                                <td className="px-4 py-3">
-                                  <span className={`px-2 py-1 rounded-full text-xs font-semibold ${tx.transactionType === 'Credit' ? 'bg-green-100 text-green-800' : tx.transactionType === 'Debit' ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-800'}`}>
-                                    {tx.transactionType}
-                                  </span>
-                                </td>
-                                <td className="px-4 py-3 font-semibold text-gray-900">
-                                  {tx.amount ? `${tx.currency || 'NGN'} ${tx.amount}` : "-"}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-                </Card>
-              );
-            })}
-          </div>
-        )}
       </main>
     </div>
   );
