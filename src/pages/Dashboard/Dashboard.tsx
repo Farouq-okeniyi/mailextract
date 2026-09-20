@@ -1144,7 +1144,7 @@ export const Dashboard: React.FC = () => {
                       Automated Monthly Scan Subscription
                     </h3>
                     <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-100 text-blue-900 border border-blue-200">
-                      ₦1,500 / month
+                      ₦200 / month
                     </span>
                     <span
                       className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold ${
@@ -1228,7 +1228,7 @@ export const Dashboard: React.FC = () => {
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4 mr-1.5" />
-                    Subscribe for ₦1,500 / month
+                    Subscribe for ₦200 / month
                   </>
                 )}
               </Button>
