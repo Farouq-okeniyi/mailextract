@@ -12,7 +12,10 @@ import {
   Trash2,
   CheckCircle2,
   Send,
-  Lock
+  Lock,
+  Calendar,
+  Sparkles,
+  RefreshCw
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
@@ -87,6 +90,81 @@ export const Dashboard: React.FC = () => {
   const [bankDropdownOpen, setBankDropdownOpen] = useState(false);
   const [bankSearch, setBankSearch] = useState('');
   const bankDropdownRef = useRef<HTMLDivElement>(null);
+  const [isSubscribedToMonthly, setIsSubscribedToMonthly] = useState(false);
+  const [updatingSubscription, setUpdatingSubscription] = useState(false);
+
+  useEffect(() => {
+    if (user) {
+      setIsSubscribedToMonthly(Boolean(user.monthlyScanSubscribed));
+    }
+  }, [user?.monthlyScanSubscribed]);
+
+  const getNextMonthFirstDateStr = () => {
+    const now = new Date();
+    const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    return nextMonth.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  };
+
+  const handleToggleMonthlySubscription = async () => {
+    if (!user?.isApproved) {
+      setShowApprovalModal(true);
+      toast.error('Admin approval required to subscribe to monthly scans');
+      return;
+    }
+
+    if (!user?.hasConnectedGmail) {
+      toast.error('Please connect your Gmail account first');
+      return;
+    }
+
+    if (isSubscribedToMonthly) {
+      // Unsubscribe flow
+      setUpdatingSubscription(true);
+      try {
+        const data = await fetchApi('/auth/users/monthly-subscription', {
+          method: 'PATCH',
+          body: JSON.stringify({
+            subscribed: false,
+          }),
+        });
+
+        setIsSubscribedToMonthly(false);
+        const updatedUser = {
+          ...user,
+          monthlyScanSubscribed: false,
+        };
+        setUser(updatedUser);
+        localStorage.setItem('user', JSON.stringify(updatedUser));
+        toast.success(data.message || 'Unsubscribed from monthly scans.');
+      } catch (err: any) {
+        toast.error(err.message || 'Failed to update monthly subscription');
+      } finally {
+        setUpdatingSubscription(false);
+      }
+      return;
+    }
+
+    // Subscribe flow -> Paystack Payment Checkout
+    setUpdatingSubscription(true);
+    try {
+      const data = await fetchApi('/payments/initialize', {
+        method: 'POST',
+        body: JSON.stringify({
+          callbackUrl: `${window.location.origin}/dashboard`,
+        }),
+      });
+
+      if (data.authorizationUrl) {
+        toast.loading('Redirecting to Paystack payment checkout...');
+        window.location.href = data.authorizationUrl;
+      } else {
+        throw new Error('Failed to obtain payment authorization URL');
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to initiate payment');
+      setUpdatingSubscription(false);
+    }
+  };
 
   // Close bank dropdown on outside click
   useEffect(() => {
@@ -138,6 +216,19 @@ export const Dashboard: React.FC = () => {
         localStorage.setItem('user', JSON.stringify(parsedUser));
         window.history.replaceState({}, '', '/dashboard');
         toast.success('Gmail connected successfully!');
+      }
+
+      const paymentRef = searchParams.get('reference') || searchParams.get('trxref');
+      if (paymentRef) {
+        window.history.replaceState({}, '', '/dashboard');
+        fetchApi(`/payments/verify/${encodeURIComponent(paymentRef)}`)
+          .then((res: any) => {
+            toast.success(res.message || 'Payment verified! Monthly subscription is active.', { duration: 6000 });
+            fetchFreshUserStatus();
+          })
+          .catch((err: any) => {
+            toast.error(err.message || 'Payment verification failed');
+          });
       }
 
       setUser(parsedUser);
@@ -1037,6 +1128,117 @@ export const Dashboard: React.FC = () => {
               </div>
             </CardContent>
           </Card>
+        </div>
+
+        {/* Card 3: Automated Monthly Scan Subscription */}
+        <div className="mb-8 bg-gradient-to-br from-blue-50/60 via-white to-emerald-50/50 border border-blue-100 rounded-2xl p-6 shadow-sm hover:shadow-md transition-all duration-300">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+            <div className="space-y-3 max-w-2xl">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-emerald-600 flex items-center justify-center text-white shadow-md shadow-blue-500/20">
+                  <Calendar className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="text-lg font-bold text-gray-900 tracking-tight">
+                      Automated Monthly Scan Subscription
+                    </h3>
+                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-100 text-blue-900 border border-blue-200">
+                      ₦1,500 / month
+                    </span>
+                    <span
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                        isSubscribedToMonthly
+                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                          : 'bg-slate-100 text-slate-600 border border-slate-200'
+                      }`}
+                    >
+                      <span
+                        className={`w-1.5 h-1.5 rounded-full ${
+                          isSubscribedToMonthly ? 'bg-emerald-500 animate-ping' : 'bg-slate-400'
+                        }`}
+                      />
+                      {isSubscribedToMonthly ? 'Subscribed • Active' : 'Not Subscribed'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Monthly background cron engine running on the 1st of every month at 00:00 UTC
+                  </p>
+                </div>
+              </div>
+
+              <p className="text-sm text-gray-600 leading-relaxed">
+                Subscribe to receive an automated scan of all your bank alert emails from the previous month. MailExtract parses your transactions with AI, creates your live Google Spreadsheet, and delivers CSV & PDF reports directly to your inbox without needing you to log in.
+              </p>
+
+              <div className="flex flex-wrap items-center gap-2.5 pt-1 text-xs text-gray-600">
+                <div className="inline-flex items-center gap-1.5 bg-white px-3 py-1.5 rounded-lg border border-blue-100 shadow-2xs whitespace-nowrap">
+                  <Clock className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Next Run: <strong className="text-gray-900">{getNextMonthFirstDateStr()}</strong></span>
+                </div>
+                <div className="inline-flex items-center gap-1.5 bg-white px-3 py-1.5 rounded-lg border border-emerald-100 shadow-2xs whitespace-nowrap">
+                  <Mail className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Delivery to: <strong className="text-gray-900">{user.email}</strong></span>
+                </div>
+                {user.subscriptionExpiresAt && isSubscribedToMonthly && (
+                  <div className="inline-flex items-center gap-1.5 bg-white px-3 py-1.5 rounded-lg border border-emerald-200 shadow-2xs text-emerald-800 whitespace-nowrap">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Active until: <strong className="text-emerald-950">{new Date(user.subscriptionExpiresAt).toLocaleDateString('en-GB')}</strong></span>
+                  </div>
+                )}
+                {user.lastMonthlyScanAt && (
+                  <div className="inline-flex items-center gap-1.5 bg-white px-3 py-1.5 rounded-lg border border-emerald-100 shadow-2xs whitespace-nowrap">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Last Scan: <strong className="text-gray-900">{new Date(user.lastMonthlyScanAt).toLocaleDateString()}</strong></span>
+                  </div>
+                )}
+                {selectedBanks.length > 0 ? (
+                  <div className="inline-flex items-center gap-1.5 bg-white px-3 py-1.5 rounded-lg border border-blue-200 shadow-2xs text-blue-700 whitespace-nowrap">
+                    <span>Banks: <strong className="text-blue-900">{selectedBanks.join(', ').toUpperCase()}</strong></span>
+                  </div>
+                ) : (
+                  <div className="inline-flex items-center gap-1.5 bg-white px-3 py-1.5 rounded-lg border border-gray-200 shadow-2xs whitespace-nowrap">
+                    <span>Banks: <strong className="text-gray-900">All Supported Banks</strong></span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row lg:flex-col items-start lg:items-end justify-center gap-3 border-t lg:border-t-0 lg:border-l border-slate-200/80 pt-4 lg:pt-0 lg:pl-6">
+              <Button
+                variant={isSubscribedToMonthly ? 'outline' : 'primary'}
+                onClick={handleToggleMonthlySubscription}
+                disabled={updatingSubscription}
+                className={
+                  isSubscribedToMonthly
+                    ? '!text-red-600 !border-red-300 bg-red-50/80 hover:bg-red-100 hover:!text-red-700 hover:!border-red-400 shadow-xs cursor-pointer font-bold'
+                    : 'bg-gradient-to-r from-blue-600 to-emerald-600 hover:from-blue-700 hover:to-emerald-700 text-white shadow-md shadow-blue-500/20 cursor-pointer font-semibold'
+                }
+              >
+                {updatingSubscription ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                    Connecting to Paystack...
+                  </>
+                ) : isSubscribedToMonthly ? (
+                  <span className="text-red-600 flex items-center">
+                    <Trash2 className="w-4 h-4 mr-1.5 text-red-600" />
+                    Unsubscribe from Monthly Scan
+                  </span>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4 mr-1.5" />
+                    Subscribe for ₦1,500 / month
+                  </>
+                )}
+              </Button>
+              <p className="text-[11px] text-gray-500 text-left lg:text-right max-w-xs">
+                {isSubscribedToMonthly
+                  ? '✓ You are opted in. You will receive an automated extraction email on the 1st of every month.'
+                  : 'You can opt in or cancel anytime with one click.'}
+              </p>
+            </div>
+          </div>
         </div>
 
         {/* Transactions Table Section */}

@@ -150,7 +150,7 @@ export const Login: React.FC = () => {
                 theme="outline"
                 size="large"
                 shape="rectangular"
-                width="100%"
+                width="380"
                 text={isSignUp ? 'signup_with' : 'signin_with'}
               />
             </div>

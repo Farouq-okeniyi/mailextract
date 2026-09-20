@@ -25,7 +25,12 @@ export const config = {
   getGoogleAuthUrl: (token?: string | null): string => {
     const base = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
     const endpoint = (import.meta.env.VITE_GOOGLE_AUTH_ENDPOINT || '').replace(/^\/+/, '');
-    const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
-    return `${base}/${endpoint}${tokenParam}`;
+    const params = new URLSearchParams();
+    if (token) params.set('token', token);
+    if (typeof window !== 'undefined' && window.location.origin) {
+      params.set('origin', window.location.origin);
+    }
+    const query = params.toString();
+    return `${base}/${endpoint}${query ? `?${query}` : ''}`;
   }
 };
